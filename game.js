@@ -252,13 +252,13 @@ let runStarted = false;
 let pickupProgress = 0;
 let nearbyLoot = null;
 let nearbyHidingSpot = null;
-let gameState = "playing";
+let gameState = "menu";
 let interactPressed = false;
 let hidePressed = false;
 let sprintNoiseTimer = 0;
 let footstepTimer = 0;
 let noiseEffect = null;
-let statusMessage = "Move or interact to start the 75-second run.";
+let statusMessage = "Welcome back. Ready for another raid?";
 
 function loadBestScore() {
   try {
@@ -352,6 +352,97 @@ function buyWorkshopPart(partId) {
   statusMessage = `${part.name} added to your collection.`;
 }
 
+function pauseGame() {
+  if (gameState !== "playing") return;
+  gameState = "paused";
+  statusMessage = "Raid paused.";
+  keysDown.clear();
+  stopFootsteps();
+}
+
+function resumeGame() {
+  if (gameState !== "paused") return;
+  gameState = "playing";
+  statusMessage = "Back in the house. Watch your noise.";
+}
+
+function returnToMainMenu() {
+  gameState = "menu";
+  keysDown.clear();
+  stopFootsteps();
+  statusMessage = "Choose your next move.";
+}
+
+function drawMenuButton(label, x, y, width, height, highlighted = false) {
+  context.fillStyle = highlighted ? "#775e3b" : "#273442";
+  context.fillRect(x, y, width, height);
+  context.strokeStyle = highlighted ? "#f2c977" : "#8b9ba8";
+  context.lineWidth = 2;
+  context.strokeRect(x, y, width, height);
+  context.fillStyle = "#f1eee7";
+  context.textAlign = "center";
+  context.font = "bold 18px sans-serif";
+  context.fillText(label, x + width / 2, y + height / 2 + 6);
+  context.textAlign = "left";
+}
+
+function drawStartMenu() {
+  context.fillStyle = "rgba(17, 23, 34, 0.88)";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.textAlign = "center";
+  context.fillStyle = "#f1eee7";
+  context.font = "bold 52px sans-serif";
+  context.fillText("DON'T WAKE IT", canvas.width / 2, 170);
+  context.font = "20px sans-serif";
+  context.fillStyle = "#c6d0d6";
+  context.fillText("Take what you can. Get out before it wakes.", canvas.width / 2, 212);
+  context.font = "bold 16px sans-serif";
+  context.fillStyle = "#f2c977";
+  context.fillText(`BEST RAID  $${bestScore}     ·     WORKSHOP BOUNTY  $${campaignWallet}`, canvas.width / 2, 265);
+
+  drawMenuButton("START RAID", 340, 315, 280, 58, true);
+  drawMenuButton("VISIT WORKSHOP", 340, 390, 280, 52);
+
+  context.font = "14px sans-serif";
+  context.fillStyle = "#c6d0d6";
+  context.fillText("Move: WASD / arrows     Sprint: Shift     Take / bank: E     Hide: H", canvas.width / 2, 492);
+  context.fillText("Pause during a raid with P, Esc, or the pause icon.", canvas.width / 2, 520);
+  context.textAlign = "left";
+}
+
+function drawPauseIcon() {
+  const x = canvas.width - 54;
+  const y = 14;
+  context.fillStyle = "#111722dd";
+  context.fillRect(x, y, 40, 38);
+  context.strokeStyle = "#aeb8bf";
+  context.lineWidth = 2;
+  context.strokeRect(x, y, 40, 38);
+  context.fillStyle = "#f1eee7";
+  context.fillRect(x + 13, y + 10, 5, 18);
+  context.fillRect(x + 22, y + 10, 5, 18);
+}
+
+function drawPauseMenu() {
+  context.fillStyle = "rgba(17, 23, 34, 0.84)";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.textAlign = "center";
+  context.fillStyle = "#f1eee7";
+  context.font = "bold 42px sans-serif";
+  context.fillText("PAUSED", canvas.width / 2, 225);
+  context.font = "16px sans-serif";
+  context.fillStyle = "#c6d0d6";
+  context.fillText("Your timer and the creature are stopped.", canvas.width / 2, 260);
+
+  drawMenuButton("RESUME", 340, 290, 280, 54, true);
+  drawMenuButton("RESTART RAID", 340, 360, 280, 54);
+  drawMenuButton("MAIN MENU", 340, 430, 280, 54);
+
+  context.font = "14px sans-serif";
+  context.fillStyle = "#c6d0d6";
+  context.fillText("P or Esc: resume     R: restart     M: main menu", canvas.width / 2, 520);
+  context.textAlign = "left";
+}
 function playSound(sound, volume = 1) {
   if (!sound) {
     return;
@@ -1302,25 +1393,18 @@ function drawHud() {
 function drawEndScreen(title, detail, extra) {
   context.fillStyle = "#111722cc";
   context.fillRect(0, 0, canvas.width, canvas.height);
-
-  context.fillStyle = "#f1eee7";
   context.textAlign = "center";
+  context.fillStyle = "#f1eee7";
   context.font = "bold 36px sans-serif";
   context.fillText(title, canvas.width / 2, canvas.height / 2 - 52);
-
   context.font = "20px sans-serif";
   context.fillText(detail, canvas.width / 2, canvas.height / 2 - 10);
-
   context.font = "17px sans-serif";
   context.fillText(extra, canvas.width / 2, canvas.height / 2 + 24);
-
-  context.font = "16px sans-serif";
-  context.fillText(
-    "Press R to visit the workshop",
-    canvas.width / 2,
-    canvas.height / 2 + 62
-  );
-
+  drawMenuButton("VISIT WORKSHOP", 340, canvas.height / 2 + 48, 280, 50, true);
+  context.font = "13px sans-serif";
+  context.fillStyle = "#c6d0d6";
+  context.fillText("Or press R", canvas.width / 2, canvas.height / 2 + 120);
   context.textAlign = "left";
 }
 
@@ -1418,15 +1502,9 @@ function drawWorkshop() {
   context.textAlign = "center";
   context.fillStyle = "#aeb8bf";
   context.font = "12px sans-serif";
-  context.fillText(statusMessage, canvas.width / 2, 600);
+  context.fillText(statusMessage, canvas.width / 2, 540);
 
-  context.fillStyle = "#f1eee7";
-  context.font = "bold 16px sans-serif";
-  context.fillText(
-    "Press R to start the next raid",
-    canvas.width / 2,
-    620
-  );
+  drawMenuButton("START NEXT RAID", 340, 565, 280, 52, true);
 
   context.textAlign = "left";
 }
@@ -1474,9 +1552,65 @@ function buyWorkshopPartAtPointer(event) {
   }
 }
 
+function handleCanvasPointer(event) {
+  const bounds = canvas.getBoundingClientRect();
+  const x = (event.clientX - bounds.left) * (canvas.width / bounds.width);
+  const y = (event.clientY - bounds.top) * (canvas.height / bounds.height);
+
+  if (gameState === "menu") {
+    if (x >= 340 && x <= 620 && y >= 315 && y <= 373) {
+      resetRun();
+    } else if (x >= 340 && x <= 620 && y >= 390 && y <= 442) {
+      openWorkshop();
+    }
+    return;
+  }
+
+  if (gameState === "paused") {
+    if (x >= 340 && x <= 620 && y >= 290 && y <= 344) {
+      resumeGame();
+    } else if (x >= 340 && x <= 620 && y >= 360 && y <= 414) {
+      resetRun();
+    } else if (x >= 340 && x <= 620 && y >= 430 && y <= 484) {
+      returnToMainMenu();
+    }
+    return;
+  }
+
+  if (gameState === "playing") {
+    if (x >= canvas.width - 60 && y >= 8 && y <= 60) {
+      pauseGame();
+    }
+    return;
+  }
+
+  if (gameState === "escaped" || gameState === "caught" || gameState === "failed") {
+    const buttonTop = canvas.height / 2 + 48;
+    if (x >= 340 && x <= 620 && y >= buttonTop && y <= buttonTop + 50) {
+      openWorkshop();
+    }
+    return;
+  }
+
+  if (gameState === "workshop") {
+    if (x >= 340 && x <= 620 && y >= 565 && y <= 617) {
+      resetRun();
+      return;
+    }
+    buyWorkshopPartAtPointer(event);
+  }
+}
 function drawGame() {
   drawHud();
 
+  if (gameState === "menu") {
+    drawStartMenu();
+    return;
+  }
+  if (gameState === "paused") {
+    drawPauseMenu();
+    return;
+  }
   if (gameState === "workshop") {
     drawWorkshop();
     return;
@@ -1498,6 +1632,7 @@ function drawGame() {
   drawNoiseEffect();
   drawCreature();
   drawPlayer();
+  if (gameState === "playing") drawPauseIcon();
 
   if (gameState === "escaped") {
     drawEndScreen(
@@ -1546,35 +1681,39 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
   }
 
-  if (gameState === "workshop") {
-    if (key === "r" && !event.repeat) {
-      resetRun();
-      return;
-    }
+  if (gameState === "menu") {
+    if (["enter", " "].includes(key) && !event.repeat) resetRun();
+    else if (key === "b" && !event.repeat) openWorkshop();
+    return;
+  }
 
-    keysDown.delete(key);
+  if (gameState === "paused") {
+    if (key === "p" || key === "escape") resumeGame();
+    else if (key === "r" && !event.repeat) resetRun();
+    else if (key === "m" && !event.repeat) returnToMainMenu();
+    return;
+  }
+
+  if (gameState === "playing" && (key === "p" || key === "escape")) {
+    pauseGame();
+    return;
+  }
+
+  if (gameState === "workshop") {
+    if (key === "r" && !event.repeat) resetRun();
     return;
   }
 
   if (
-    key === "r" &&
-    !event.repeat &&
-    (gameState === "escaped" ||
-      gameState === "caught" ||
-      gameState === "failed")
+    key === "r" && !event.repeat &&
+    (gameState === "escaped" || gameState === "caught" || gameState === "failed")
   ) {
     openWorkshop();
     return;
   }
 
-  if (key === "e" && !event.repeat) {
-    interactPressed = true;
-  }
-
-  if (key === "h" && !event.repeat) {
-    hidePressed = true;
-  }
-
+  if (key === "e" && !event.repeat) interactPressed = true;
+  if (key === "h" && !event.repeat) hidePressed = true;
   keysDown.add(key);
 });
 
@@ -1582,9 +1721,7 @@ window.addEventListener("keyup", (event) => {
   keysDown.delete(event.key.toLowerCase());
 });
 
-canvas.addEventListener("pointerdown", (event) => {
-  buyWorkshopPartAtPointer(event);
-});
+canvas.addEventListener("pointerdown", handleCanvasPointer);
 
 document.querySelectorAll("[data-game-key]").forEach((button) => {
   const key = button.dataset.gameKey;
