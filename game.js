@@ -230,86 +230,17 @@ const soundFiles = {
   sprinting: createSound("audio/sprint-footsteps.wav", true),
   coin: createSound("audio/coin-collect.wav"),
   diamond: createSound("audio/diamond-collect.wav"),
-  silver: createSound("audio/silver-collect.ogg")
+  silver: createSound("audio/silver-collect.ogg"),
+  creatureSnore: createSound("audio/monster-snoar.mp3", true),
+  creatureSniffing: createSound("audio/monster-sniffing.mp3", true),
+  creatureRoar: createSound("audio/monster-roar.mp3"),
+  creatureBite: createSound("audio/monster-bite.mp3"),
+  playerDeathcry: createSound("audio/player-deathcry.mp3")
 };
 
-// Creature sounds are generated in the browser, so no extra audio file is needed.
-let creatureAudioContext = null;
-let creatureSnoreTimer = 0;
-
-function prepareCreatureAudio() {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) return;
-
-  try {
-    if (!creatureAudioContext) {
-      creatureAudioContext = new AudioContextClass();
-    }
-    if (creatureAudioContext.state === "suspended") {
-      creatureAudioContext.resume().catch(() => {});
-    }
-  } catch {
-    // The game remains playable if Web Audio is unavailable.
-  }
-}
-
-function playCreatureTone(startFrequency, endFrequency, duration, volume, type = "sine") {
-  if (!creatureAudioContext || creatureAudioContext.state !== "running") return;
-
-  const now = creatureAudioContext.currentTime;
-  const oscillator = creatureAudioContext.createOscillator();
-  const gain = creatureAudioContext.createGain();
-  oscillator.type = type;
-  oscillator.frequency.setValueAtTime(startFrequency, now);
-  oscillator.frequency.exponentialRampToValueAtTime(
-    Math.max(1, endFrequency),
-    now + duration
-  );
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.linearRampToValueAtTime(volume, now + Math.min(0.08, duration * 0.2));
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-  oscillator.connect(gain);
-  gain.connect(creatureAudioContext.destination);
-  oscillator.start(now);
-  oscillator.stop(now + duration + 0.02);
-}
-
-function playCreatureSnore() {
-  playCreatureTone(135, 112, 0.75, 0.035, "sine");
-  playCreatureTone(68, 58, 0.78, 0.018, "sine");
-}
-
-function playCreatureAlert(reason) {
-  // Sight gets a sharper, higher intake; a sound gets a lower sleepy groan.
-  if (reason === "sight") {
-    playCreatureTone(235, 150, 0.42, 0.075, "triangle");
-  } else {
-    playCreatureTone(155, 82, 0.72, 0.085, "triangle");
-    playCreatureTone(78, 52, 0.68, 0.045, "sine");
-  }
-}
-
-function playCreatureSearchCue() {
-  playCreatureTone(125, 92, 0.5, 0.055, "triangle");
-}
-
-function playCreatureSettleCue() {
-  playCreatureTone(100, 72, 0.65, 0.035, "sine");
-}
-
-function updateCreatureAudio(deltaSeconds) {
-  if (gameState !== "playing" || !creatureAudioContext) return;
-
-  if (creature.state === "sleeping") {
-    creatureSnoreTimer -= deltaSeconds;
-    if (creatureSnoreTimer <= 0) {
-      playCreatureSnore();
-      creatureSnoreTimer = 4.8;
-    }
-  } else {
-    creatureSnoreTimer = 1.5;
-  }
-}
+let caughtElapsed = 0;
+let deathCryPlayed = false;
+let deathCryDelay = 0.9;
 
 function createSound(path, shouldLoop = false) {
   const sound = new Audio(path);
@@ -397,6 +328,7 @@ function openWorkshop() {
   gameState = "workshop";
   keysDown.clear();
   stopFootsteps();
+  stopCreatureLoops();
 }
 
 function buyWorkshopPart(partId) {
@@ -436,18 +368,21 @@ function pauseGame() {
   statusMessage = "Raid paused.";
   keysDown.clear();
   stopFootsteps();
+  stopCreatureLoops();
 }
 
 function resumeGame() {
   if (gameState !== "paused") return;
   gameState = "playing";
   statusMessage = "Back in the house. Watch your noise.";
+  resumeCreatureLoopForCurrentState();
 }
 
 function returnToMainMenu() {
   gameState = "menu";
   keysDown.clear();
   stopFootsteps();
+  stopCreatureLoops();
   statusMessage = "Choose your next move.";
 }
 
@@ -538,6 +473,82 @@ function playSound(sound, volume = 1) {
   }
 }
 
+function startCreatureLoop(sound, volume) {
+  if (!sound) return;
+  sound.loop = true;
+  sound.volume = volume;
+  if (!sound.paused) return;
+
+  sound.currentTime = 0;
+  const playback = sound.play();
+  if (playback && typeof playback.catch === "function") {
+    playback.catch(() => {
+      // The browser may delay audio until the player starts the raid.
+    });
+  }
+}
+
+function stopCreatureLoops() {
+  for (const sound of [soundFiles.creatureSnore, soundFiles.creatureSniffing]) {
+    sound.pause();
+    sound.currentTime = 0;
+  }
+}
+
+function playCreatureAlert() {
+  stopCreatureLoops();
+  playSound(soundFiles.creatureRoar, 0.8);
+}
+
+function playCreatureSearchCue() {
+  stopCreatureLoops();
+  startCreatureLoop(soundFiles.creatureSniffing, 0.65);
+}
+
+function resumeCreatureLoopForCurrentState() {
+  if (creature.state === "sleeping") {
+    startCreatureLoop(soundFiles.creatureSnore, 0.35);
+  } else if (creature.state === "searching") {
+    startCreatureLoop(soundFiles.creatureSniffing, 0.65);
+  }
+}
+
+function drawCaughtBlood() {
+  const redFade = Math.min(0.58, caughtElapsed * 0.5);
+  context.fillStyle = `rgba(115, 0, 10, ${redFade})`;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const splatAlpha = Math.min(0.9, 0.35 + caughtElapsed * 0.3);
+  const splashes = [
+    [0.47, 0.48, 42], [0.53, 0.46, 28], [0.44, 0.54, 22],
+    [0.58, 0.52, 20], [0.51, 0.56, 16], [0.39, 0.43, 13],
+    [0.63, 0.42, 12], [0.36, 0.59, 10], [0.67, 0.58, 9]
+  ];
+
+  context.fillStyle = `rgba(90, 0, 7, ${splatAlpha})`;
+  for (const [xRatio, yRatio, radius] of splashes) {
+    const x = canvas.width * xRatio;
+    const y = canvas.height * yRatio;
+    context.beginPath();
+    context.ellipse(x, y, radius, radius * 0.72, -0.25, 0, Math.PI * 2);
+    context.fill();
+
+    for (let drop = 0; drop < 5; drop++) {
+      const angle = drop * 1.256 + xRatio * 8;
+      const distance = radius * (1.25 + (drop % 3) * 0.35);
+      context.beginPath();
+      context.arc(
+        x + Math.cos(angle) * distance,
+        y + Math.sin(angle) * distance,
+        Math.max(2, radius * (0.08 + (drop % 2) * 0.025)),
+        0,
+        Math.PI * 2
+      );
+      context.fill();
+    }
+  }
+}
+
 function playTreasureSound(item) {
   if (item.name === "Coin pouch") {
     playSound(soundFiles.coin, 0.65);
@@ -582,8 +593,9 @@ function stopFootsteps() {
 }
 
 function resetRun() {
-  prepareCreatureAudio();
-  creatureSnoreTimer = 0.8;
+  stopCreatureLoops();
+  caughtElapsed = 0;
+  deathCryPlayed = false;
 
   player.x = playerStart.x;
   player.y = playerStart.y;
@@ -597,6 +609,7 @@ function resetRun() {
   creature.noiseTarget = null;
   creature.targetTileKey = null;
   creature.alertReason = "sound";
+  startCreatureLoop(soundFiles.creatureSnore, 0.35);
 
   carriedItem = null;
   bankedValue = 0;
@@ -799,6 +812,8 @@ function setCreatureInvestigating(target, reason) {
     return;
   }
 
+  const wasAlreadyInvestigating = creature.state === "investigating";
+
   creature.noiseTarget = tileCenter(targetColumn, targetRow);
   creature.targetTileKey = targetTileKey;
   creature.path = findPath(
@@ -808,7 +823,9 @@ function setCreatureInvestigating(target, reason) {
     creature.noiseTarget.y
   );
   creature.state = "investigating";
-  playCreatureAlert(reason);
+  if (!wasAlreadyInvestigating) {
+    playCreatureAlert();
+  }
   creature.searchTimer = 0;
   creature.alertReason = reason;
 }
@@ -897,6 +914,17 @@ function failRun(reason, state = "failed") {
   gameState = state;
   statusMessage = reason;
   stopFootsteps();
+  stopCreatureLoops();
+
+  if (state === "caught") {
+    caughtElapsed = 0;
+    deathCryPlayed = false;
+    const biteDuration = soundFiles.creatureBite.duration;
+    deathCryDelay = Number.isFinite(biteDuration) && biteDuration > 0
+      ? biteDuration
+      : 0.9;
+    playSound(soundFiles.creatureBite, 0.9);
+  }
 }
 
 function updateCreature(deltaSeconds) {
@@ -919,7 +947,7 @@ function updateCreature(deltaSeconds) {
         creatureHome.y
       );
       creature.state = "returning";
-      playCreatureSettleCue();
+      stopCreatureLoops();
     }
   } else if (creature.state === "returning") {
     const reachedHome = moveCreatureAlongPath(deltaSeconds);
@@ -930,6 +958,7 @@ function updateCreature(deltaSeconds) {
       creature.noiseTarget = null;
       creature.targetTileKey = null;
       creature.state = "sleeping";
+      startCreatureLoop(soundFiles.creatureSnore, 0.35);
     }
   }
 
@@ -983,6 +1012,7 @@ function handleExitInteraction() {
   }
 
   stopFootsteps();
+  stopCreatureLoops();
   statusMessage = `You escaped with $${bankedValue} secured.`;
 }
 
@@ -995,6 +1025,17 @@ function formatTime(seconds) {
 }
 
 function update(deltaSeconds) {
+  if (gameState === "caught") {
+    caughtElapsed += deltaSeconds;
+    if (!deathCryPlayed && caughtElapsed >= deathCryDelay) {
+      playSound(soundFiles.playerDeathcry, 0.9);
+      deathCryPlayed = true;
+    }
+    interactPressed = false;
+    hidePressed = false;
+    return;
+  }
+
   if (gameState !== "playing") {
     interactPressed = false;
     hidePressed = false;
@@ -1165,7 +1206,6 @@ function update(deltaSeconds) {
 
   if (gameState === "playing") {
     updateCreature(deltaSeconds);
-    updateCreatureAudio(deltaSeconds);
   }
 
   if (gameState === "playing" && runStarted) {
@@ -1726,11 +1766,14 @@ function drawGame() {
       `Personal best: $${bestScore}`
     );
   } else if (gameState === "caught") {
-    drawEndScreen(
-      "It found you!",
-      `Banked: $${bankedValue}. Carried treasure was lost.`,
-      `Successful-run best: $${bestScore}`
-    );
+    drawCaughtBlood();
+    if (caughtElapsed >= Math.max(2.4, deathCryDelay + 1.2)) {
+      drawEndScreen(
+        "It found you!",
+        `Banked: $${bankedValue}. Carried treasure was lost.`,
+        `Successful-run best: $${bestScore}`
+      );
+    }
   } else if (gameState === "failed") {
     const detail = bankedValue >= MINIMUM_BOUNTY
       ? `You banked $${bankedValue}, but didn't escape in time.`
@@ -1808,21 +1851,205 @@ window.addEventListener("keyup", (event) => {
 
 canvas.addEventListener("pointerdown", handleCanvasPointer);
 
+const gameStage = document.querySelector("#game-stage");
+const touchControlSurface = document.querySelector(".touch-controls");
+const fullscreenButton = document.querySelector("#fullscreen-button");
+const controlsSettingsButton = document.querySelector("#controls-settings-button");
+const controlsEditor = document.querySelector("#controls-editor");
+const editControlsCheckbox = document.querySelector("#edit-controls");
+const controlSizeSlider = document.querySelector("#control-size");
+const controlOpacitySlider = document.querySelector("#control-opacity");
+const controlSizeValue = document.querySelector("#control-size-value");
+const controlOpacityValue = document.querySelector("#control-opacity-value");
+const closeControlsButton = document.querySelector("#close-controls-editor");
+const CONTROL_LAYOUT_KEY = "dontWakeItTouchLayout";
+const CONTROL_LAYOUT_DEFAULTS = {
+  size: 1,
+  opacity: 0.55,
+  move: { x: 2, y: 68 },
+  actions: { x: 55, y: 68 }
+};
+let controlLayout = loadControlLayout();
+let controlLayoutEditMode = false;
+
+function loadControlLayout() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CONTROL_LAYOUT_KEY) || "null");
+    return {
+      ...CONTROL_LAYOUT_DEFAULTS,
+      ...(saved || {}),
+      move: { ...CONTROL_LAYOUT_DEFAULTS.move, ...(saved?.move || {}) },
+      actions: { ...CONTROL_LAYOUT_DEFAULTS.actions, ...(saved?.actions || {}) }
+    };
+  } catch {
+    return {
+      ...CONTROL_LAYOUT_DEFAULTS,
+      move: { ...CONTROL_LAYOUT_DEFAULTS.move },
+      actions: { ...CONTROL_LAYOUT_DEFAULTS.actions }
+    };
+  }
+}
+
+function saveControlLayout() {
+  try {
+    localStorage.setItem(CONTROL_LAYOUT_KEY, JSON.stringify(controlLayout));
+  } catch {
+    // Customization still works until the page is closed.
+  }
+}
+
+function applyControlLayout() {
+  if (!gameStage) return;
+  gameStage.style.setProperty("--touch-scale", controlLayout.size);
+  gameStage.style.setProperty("--touch-opacity", controlLayout.opacity);
+
+  document.querySelectorAll("[data-control-group]").forEach((group) => {
+    const savedPosition = controlLayout[group.dataset.controlGroup];
+    if (!savedPosition) return;
+    group.style.left = `${savedPosition.x}%`;
+    group.style.top = `${savedPosition.y}%`;
+    group.style.right = "auto";
+    group.style.bottom = "auto";
+  });
+
+  if (controlSizeSlider) {
+    controlSizeSlider.value = String(controlLayout.size);
+    controlSizeValue.textContent = `${Math.round(controlLayout.size * 100)}%`;
+  }
+  if (controlOpacitySlider) {
+    controlOpacitySlider.value = String(controlLayout.opacity);
+    controlOpacityValue.textContent = `${Math.round(controlLayout.opacity * 100)}%`;
+  }
+}
+
+function setControlEditMode(enabled) {
+  controlLayoutEditMode = enabled;
+  gameStage?.classList.toggle("editing-controls", enabled);
+  if (controlsEditor) {
+    controlsEditor.querySelector(".edit-hint").textContent = enabled
+      ? "Drag either control cluster to move it. Turn this off before playing."
+      : "Turn on placement mode, then drag either control cluster.";
+  }
+}
+
+function configureDraggableControlGroups() {
+  document.querySelectorAll("[data-control-group]").forEach((group) => {
+    let dragStart = null;
+
+    group.addEventListener("pointerdown", (event) => {
+      if (!controlLayoutEditMode) return;
+      event.preventDefault();
+      event.stopPropagation();
+      group.setPointerCapture(event.pointerId);
+      const stageBounds = touchControlSurface.getBoundingClientRect();
+      const groupBounds = group.getBoundingClientRect();
+      dragStart = {
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+        left: groupBounds.left - stageBounds.left,
+        top: groupBounds.top - stageBounds.top,
+        stageBounds
+      };
+    });
+
+    group.addEventListener("pointermove", (event) => {
+      if (!controlLayoutEditMode || !dragStart) return;
+      event.preventDefault();
+      const { stageBounds } = dragStart;
+      const groupWidth = group.getBoundingClientRect().width;
+      const groupHeight = group.getBoundingClientRect().height;
+      const maxLeft = Math.max(0, stageBounds.width - groupWidth);
+      const maxTop = Math.max(0, stageBounds.height - groupHeight);
+      const nextLeft = Math.min(maxLeft, Math.max(0,
+        dragStart.left + event.clientX - dragStart.pointerX
+      ));
+      const nextTop = Math.min(maxTop, Math.max(0,
+        dragStart.top + event.clientY - dragStart.pointerY
+      ));
+      const groupName = group.dataset.controlGroup;
+      controlLayout[groupName] = {
+        x: stageBounds.width ? nextLeft / stageBounds.width * 100 : 0,
+        y: stageBounds.height ? nextTop / stageBounds.height * 100 : 0
+      };
+      applyControlLayout();
+    });
+
+    const finishDragging = () => {
+      if (!dragStart) return;
+      dragStart = null;
+      saveControlLayout();
+    };
+    group.addEventListener("pointerup", finishDragging);
+    group.addEventListener("pointercancel", finishDragging);
+    group.addEventListener("lostpointercapture", finishDragging);
+  });
+}
+
+function updateFullscreenButton() {
+  if (!fullscreenButton) return;
+  const fullscreen = document.fullscreenElement === gameStage ||
+    gameStage?.classList.contains("pseudo-fullscreen");
+  fullscreenButton.textContent = fullscreen ? "⤢ Exit" : "⛶ Fullscreen";
+  fullscreenButton.setAttribute("aria-pressed", String(fullscreen));
+}
+
+async function toggleFullscreen() {
+  if (!gameStage) return;
+
+  if (document.fullscreenElement === gameStage) {
+    await document.exitFullscreen().catch(() => {});
+  } else if (gameStage.classList.contains("pseudo-fullscreen")) {
+    gameStage.classList.remove("pseudo-fullscreen");
+  } else if (gameStage.requestFullscreen) {
+    try {
+      await gameStage.requestFullscreen();
+    } catch {
+      gameStage.classList.add("pseudo-fullscreen");
+    }
+  } else {
+    gameStage.classList.add("pseudo-fullscreen");
+  }
+  updateFullscreenButton();
+}
+
+fullscreenButton?.addEventListener("click", toggleFullscreen);
+document.addEventListener("fullscreenchange", updateFullscreenButton);
+
+controlsSettingsButton?.addEventListener("click", () => {
+  controlsEditor.hidden = !controlsEditor.hidden;
+  if (controlsEditor.hidden) setControlEditMode(false);
+});
+closeControlsButton?.addEventListener("click", () => {
+  controlsEditor.hidden = true;
+  if (editControlsCheckbox) editControlsCheckbox.checked = false;
+  setControlEditMode(false);
+});
+editControlsCheckbox?.addEventListener("change", () => {
+  setControlEditMode(editControlsCheckbox.checked);
+});
+controlSizeSlider?.addEventListener("input", () => {
+  controlLayout.size = Number(controlSizeSlider.value);
+  applyControlLayout();
+  saveControlLayout();
+});
+controlOpacitySlider?.addEventListener("input", () => {
+  controlLayout.opacity = Number(controlOpacitySlider.value);
+  applyControlLayout();
+  saveControlLayout();
+});
+
 document.querySelectorAll("[data-game-key]").forEach((button) => {
   const key = button.dataset.gameKey;
 
   button.addEventListener("pointerdown", (event) => {
+    if (controlLayoutEditMode) return;
     event.preventDefault();
+    event.stopPropagation();
     button.setPointerCapture(event.pointerId);
     keysDown.add(key);
 
-    if (key === "e") {
-      interactPressed = true;
-    }
-
-    if (key === "h") {
-      hidePressed = true;
-    }
+    if (key === "e") interactPressed = true;
+    if (key === "h") hidePressed = true;
   });
 
   function releaseButton(event) {
@@ -1834,6 +2061,9 @@ document.querySelectorAll("[data-game-key]").forEach((button) => {
   button.addEventListener("pointercancel", releaseButton);
   button.addEventListener("lostpointercapture", releaseButton);
 });
+
+applyControlLayout();
+configureDraggableControlGroups();
 
 window.addEventListener("blur", () => {
   keysDown.clear();
