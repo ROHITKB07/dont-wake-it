@@ -6,414 +6,70 @@
   <meta name="theme-color" content="#101722">
   <title>Don't Wake It</title>
   <style>
-    :root {
-      color-scheme: dark;
-      font-family: system-ui, Segoe UI, sans-serif;
-      background: #101722;
-      color: #f3f0e8;
+    :root { color-scheme: dark; font-family: system-ui, Segoe UI, sans-serif; background:#101722; color:#f3f0e8; }
+    * { box-sizing:border-box; }
+    html, body { margin:0; min-height:100%; }
+    body { min-height:100vh; padding:18px; }
+    .page { width:min(1320px,100%); margin:0 auto; }
+    h1 { margin:0 0 12px; font-size:clamp(1.4rem,3vw,2rem); }
+    .layout { display:grid; grid-template-columns:minmax(0,1fr) 270px; gap:14px; align-items:start; }
+    #game-stage { position:relative; width:100%; overflow:hidden; border:2px solid #87939a; background:#17212c; line-height:0; touch-action:none; }
+    #game { display:block; width:100%; height:auto; aspect-ratio:3/2; }
+    .hud { border:1px solid #52616c; border-radius:10px; background:#1a2531; padding:16px; line-height:1.4; }
+    .hud h2 { margin:0 0 12px; font-size:1.1rem; }
+    .stat { display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid #33414d; }
+    .stat strong { text-align:right; }
+    #hud-message { min-height:3em; margin:14px 0 6px; color:#f4c86b; }
+    #hud-prompt { min-height:2em; color:#c5cdd2; }
+    .instructions { margin-top:12px; color:#c5cdd2; font-size:.94rem; }
+    .instructions p { margin:7px 0; }
+    .utility { position:absolute; z-index:4; top:10px; left:10px; display:flex; gap:8px; line-height:normal; }
+    .utility button, .editor button { border:1px solid #aab8c1; border-radius:8px; background:#101722d9; color:#fff; padding:9px 12px; font:600 .9rem system-ui,sans-serif; cursor:pointer; }
+    .utility button:hover, .editor button:hover { background:#344453; }
+    .touch-controls { position:absolute; z-index:3; inset:0; pointer-events:none; line-height:normal; }
+    @media (min-width:761px) and (hover:hover) and (pointer:fine) { .touch-controls, #controls-settings-button { display:none; } }
+    .control-group { position:absolute; display:flex; gap:8px; align-items:center; justify-content:center; padding:6px; border:1px dashed transparent; border-radius:16px; pointer-events:auto; touch-action:none; transform:scale(var(--touch-scale)); transform-origin:top left; }
+    .move-group { padding:8px; }
+    .joystick-base { position:relative; width:clamp(116px,16vw,150px); aspect-ratio:1; border:2px solid #d1dce180; border-radius:50%; background:rgb(16 23 34 / var(--touch-opacity)); box-shadow:inset 0 0 18px #0007; touch-action:none; }
+    .joystick-base::before { content:""; position:absolute; inset:23%; border:1px solid #d1dce140; border-radius:50%; }
+    .joystick-knob { position:absolute; left:50%; top:50%; width:44%; height:44%; border:2px solid #fff9; border-radius:50%; background:radial-gradient(circle at 35% 30%,#f4f4f4,#aab3bd 76%,#707b86); box-shadow:0 3px 9px #0009; transform:translate(-50%,-50%); pointer-events:none; }
+    .joystick-base::after { content:"MOVE"; position:absolute; left:50%; top:50%; color:#ffffff80; font:bold .75rem system-ui,sans-serif; letter-spacing:.08em; transform:translate(-50%,-50%); pointer-events:none; }
+    .actions-group { display:grid; grid-template-columns:repeat(2,clamp(74px,13vw,132px)); grid-template-rows:repeat(2,clamp(42px,7vw,64px)); }
+    .touch-controls [data-game-key] { border:2px solid #d1dce1a6; border-radius:13px; background:rgb(40 55 68 / var(--touch-opacity)); color:#fff; font:bold clamp(1rem,2.8vw,1.35rem) system-ui,sans-serif; text-shadow:0 1px 3px #000; cursor:pointer; touch-action:none; user-select:none; -webkit-user-select:none; }
+    .actions-group [data-game-key="shift"] { background:rgb(103 67 59 / var(--touch-opacity)); }
+    .actions-group [data-game-key="e"] { grid-column:1 / -1; background:rgb(130 96 53 / var(--touch-opacity)); }
+    .touch-controls [data-game-key]:active { filter:brightness(1.3); }
+    .editing-controls .control-group { border-color:#f4c86b; background:#e8c16b22; cursor:move; }
+    .editing-controls .touch-controls [data-game-key] { pointer-events:none; }
+    .editor { position:absolute; z-index:6; top:58px; left:10px; width:min(320px,calc(100% - 20px)); padding:14px; border:1px solid #83929d; border-radius:12px; background:#111a25f2; color:#f4f2eb; line-height:1.35; box-shadow:0 8px 30px #0008; }
+    .editor[hidden] { display:none; }
+    .editor h2 { margin:0 0 10px; font-size:1.05rem; }
+    .editor label { display:block; margin:10px 0 4px; font-size:.9rem; }
+    .editor input[type="range"] { width:100%; accent-color:#e8bd66; }
+    .editor .checkline { display:flex; align-items:center; gap:8px; }
+    .editor .edit-hint { min-height:2.8em; color:#f4c86b; font-size:.85rem; }
+    .editor button { margin-top:8px; }
+    .mobile-hint { display:none; margin:8px 0 0; color:#c3ccd1; font-size:.84rem; }
+    #game-stage.pseudo-fullscreen, #game-stage:fullscreen { position:fixed; inset:0; z-index:9999; width:100vw; height:100vh; height:100dvh; border:0; display:grid; place-items:center; background:#101722; }
+    #game-stage.pseudo-fullscreen #game, #game-stage:fullscreen #game { width:min(100vw,150vh); width:min(100vw,150dvh); height:min(100vh,66.6667vw); height:min(100dvh,66.6667vw); object-fit:contain; }
+    #game-stage.pseudo-fullscreen .touch-controls, #game-stage:fullscreen .touch-controls { width:min(100vw,150dvh); height:min(100vh,66.6667vw); height:min(100dvh,66.6667vw); inset:50% auto auto 50%; transform:translate(-50%,-50%); }
+    @media (max-width:760px) {
+      body { padding:0; height:100vh; height:100dvh; overflow:hidden; }
+      .page { height:100%; display:flex; flex-direction:column; }
+      h1 { flex:none; padding:5px 10px 3px; margin:0; font-size:1.05rem; }
+      .layout { display:flex; flex-direction:column; justify-content:center; min-height:0; flex:1; gap:0; }
+      #game-stage { flex:none; width:100%; max-height:calc(100dvh - 30px); border-width:1px 0; }
+      #game { width:100%; max-height:calc(100dvh - 30px); object-fit:contain; }
+      .hud { display:none; }
+      .mobile-hint { display:block; position:absolute; z-index:2; bottom:5px; left:8px; padding:4px 7px; border-radius:6px; background:#101722b8; pointer-events:none; }
+      .utility { top:6px; left:6px; }
+      .utility button { padding:6px 8px; font-size:.76rem; }
+      .joystick-base { width:clamp(112px,25vw,150px); }
+      .actions-group { grid-template-columns:repeat(2,clamp(70px,22vw,112px)); grid-template-rows:repeat(2,clamp(39px,11vw,56px)); }
+      .control-group { gap:5px; padding:4px; }
     }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    html,
-    body {
-      margin: 0;
-      min-height: 100%;
-    }
-
-    body {
-      min-height: 100vh;
-      padding: 18px;
-    }
-
-    .page {
-      width: min(1320px, 100%);
-      margin: 0 auto;
-    }
-
-    h1 {
-      margin: 0 0 12px;
-      font-size: clamp(1.4rem, 3vw, 2rem);
-    }
-
-    .layout {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 270px;
-      gap: 14px;
-      align-items: start;
-    }
-
-    #game-stage {
-      position: relative;
-      width: 100%;
-      overflow: hidden;
-      border: 2px solid #87939a;
-      background: #17212c;
-      line-height: 0;
-      touch-action: none;
-    }
-
-    #game {
-      display: block;
-      width: 100%;
-      height: auto;
-      aspect-ratio: 3 / 2;
-    }
-
-    .hud {
-      border: 1px solid #52616c;
-      border-radius: 10px;
-      background: #1a2531;
-      padding: 16px;
-      line-height: 1.4;
-    }
-
-    .hud h2 {
-      margin: 0 0 12px;
-      font-size: 1.1rem;
-    }
-
-    .stat {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 8px 0;
-      border-bottom: 1px solid #33414d;
-    }
-
-    .stat strong {
-      text-align: right;
-    }
-
-    #hud-message {
-      min-height: 3em;
-      margin: 14px 0 6px;
-      color: #f4c86b;
-    }
-
-    #hud-prompt {
-      min-height: 2em;
-      color: #c5cdd2;
-    }
-
-    .instructions {
-      margin-top: 12px;
-      color: #c5cdd2;
-      font-size: 0.94rem;
-    }
-
-    .instructions p {
-      margin: 7px 0;
-    }
-
-    .utility {
-      position: absolute;
-      z-index: 4;
-      top: 10px;
-      left: 10px;
-      display: flex;
-      gap: 8px;
-      line-height: normal;
-    }
-
-    .utility button,
-    .editor button {
-      border: 1px solid #aab8c1;
-      border-radius: 8px;
-      background: #101722d9;
-      color: #fff;
-      padding: 9px 12px;
-      font: 600 0.9rem system-ui, sans-serif;
-      cursor: pointer;
-    }
-
-    .utility button:hover,
-    .editor button:hover {
-      background: #344453;
-    }
-
-    .touch-controls {
-      position: absolute;
-      z-index: 3;
-      inset: 0;
-      pointer-events: none;
-      line-height: normal;
-      --touch-scale: 1;
-      --touch-opacity: 0.55;
-    }
-
-    /* Hide touch controls only on a mouse-first desktop, not on a wide iPad. */
-    @media (min-width: 761px) and (hover: hover) and (pointer: fine) {
-      .touch-controls,
-      #controls-settings-button {
-        display: none;
-      }
-    }
-
-    .control-group {
-      position: absolute;
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      justify-content: center;
-      padding: 6px;
-      border: 1px dashed transparent;
-      border-radius: 16px;
-      pointer-events: auto;
-      touch-action: none;
-      transform: scale(var(--touch-scale));
-      transform-origin: top left;
-    }
-
-    .move-group {
-      display: grid;
-      grid-template-columns: repeat(3, clamp(42px, 7vw, 68px));
-      grid-template-rows: repeat(2, clamp(42px, 7vw, 68px));
-    }
-
-    .move-group [data-game-key="arrowup"] {
-      grid-column: 2;
-      grid-row: 1;
-    }
-
-    .move-group [data-game-key="arrowleft"] {
-      grid-column: 1;
-      grid-row: 2;
-    }
-
-    .move-group [data-game-key="arrowdown"] {
-      grid-column: 2;
-      grid-row: 2;
-    }
-
-    .move-group [data-game-key="arrowright"] {
-      grid-column: 3;
-      grid-row: 2;
-    }
-
-    .actions-group {
-      display: grid;
-      grid-template-columns: repeat(2, clamp(74px, 13vw, 132px));
-      grid-template-rows: repeat(2, clamp(42px, 7vw, 64px));
-    }
-
-    .touch-controls [data-game-key] {
-      border: 2px solid #d1dce1a6;
-      border-radius: 13px;
-      background: rgb(40 55 68 / var(--touch-opacity));
-      color: #fff;
-      font: bold clamp(1rem, 2.8vw, 1.35rem) system-ui, sans-serif;
-      text-shadow: 0 1px 3px #000;
-      cursor: pointer;
-      touch-action: none;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-
-    .actions-group [data-game-key="shift"] {
-      background: rgb(103 67 59 / var(--touch-opacity));
-    }
-
-    .actions-group [data-game-key="e"] {
-      grid-column: 1 / -1;
-      background: rgb(130 96 53 / var(--touch-opacity));
-    }
-
-    .touch-controls [data-game-key]:active {
-      filter: brightness(1.3);
-    }
-
-    .editing-controls .control-group {
-      border-color: #f4c86b;
-      background: #e8c16b22;
-      cursor: move;
-    }
-
-    .editing-controls .touch-controls [data-game-key] {
-      pointer-events: none;
-    }
-
-    .editor {
-      position: absolute;
-      z-index: 6;
-      top: 58px;
-      left: 10px;
-      width: min(320px, calc(100% - 20px));
-      padding: 14px;
-      border: 1px solid #83929d;
-      border-radius: 12px;
-      background: #111a25f2;
-      color: #f4f2eb;
-      line-height: 1.35;
-      box-shadow: 0 8px 30px #0008;
-    }
-
-    .editor[hidden] {
-      display: none;
-    }
-
-    .editor h2 {
-      margin: 0 0 10px;
-      font-size: 1.05rem;
-    }
-
-    .editor label {
-      display: block;
-      margin: 10px 0 4px;
-      font-size: 0.9rem;
-    }
-
-    .editor input[type="range"] {
-      width: 100%;
-      accent-color: #e8bd66;
-    }
-
-    .editor .checkline {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .editor .edit-hint {
-      min-height: 2.8em;
-      color: #f4c86b;
-      font-size: 0.85rem;
-    }
-
-    .editor button {
-      margin-top: 8px;
-    }
-
-    .mobile-hint {
-      display: none;
-      margin: 8px 0 0;
-      color: #c3ccd1;
-      font-size: 0.84rem;
-    }
-
-    #game-stage.pseudo-fullscreen,
-    #game-stage:fullscreen {
-      position: fixed;
-      inset: 0;
-      z-index: 9999;
-      width: 100vw;
-      height: 100vh;
-      height: 100dvh;
-      border: 0;
-      display: grid;
-      place-items: center;
-      background: #101722;
-    }
-
-    #game-stage.pseudo-fullscreen #game,
-    #game-stage:fullscreen #game {
-      width: min(100vw, 150vh);
-      width: min(100vw, 150dvh);
-      height: min(100vh, 66.6667vw);
-      height: min(100dvh, 66.6667vw);
-      object-fit: contain;
-    }
-
-    #game-stage.pseudo-fullscreen .touch-controls,
-    #game-stage:fullscreen .touch-controls {
-      width: min(100vw, 150dvh);
-      height: min(100vh, 66.6667vw);
-      height: min(100dvh, 66.6667vw);
-      inset: 50% auto auto 50%;
-      transform: translate(-50%, -50%);
-    }
-
-    @media (max-width: 760px) {
-      body {
-        padding: 0;
-        height: 100vh;
-        height: 100dvh;
-        overflow: hidden;
-      }
-
-      .page {
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-      }
-
-      h1 {
-        flex: none;
-        padding: 5px 10px 3px;
-        margin: 0;
-        font-size: 1.05rem;
-      }
-
-      .layout {
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        min-height: 0;
-        flex: 1;
-        gap: 0;
-      }
-
-      #game-stage {
-        flex: none;
-        width: 100%;
-        max-height: calc(100dvh - 30px);
-        border-width: 1px 0;
-      }
-
-      #game {
-        width: 100%;
-        max-height: calc(100dvh - 30px);
-        object-fit: contain;
-      }
-
-      .hud {
-        display: none;
-      }
-
-      .mobile-hint {
-        display: block;
-        position: absolute;
-        z-index: 2;
-        bottom: 5px;
-        left: 8px;
-        padding: 4px 7px;
-        border-radius: 6px;
-        background: #101722b8;
-        pointer-events: none;
-      }
-
-      .utility {
-        top: 6px;
-        left: 6px;
-      }
-
-      .utility button {
-        padding: 6px 8px;
-        font-size: 0.76rem;
-      }
-
-      .move-group {
-        grid-template-columns: repeat(3, clamp(39px, 12vw, 60px));
-        grid-template-rows: repeat(2, clamp(39px, 12vw, 60px));
-      }
-
-      .actions-group {
-        grid-template-columns: repeat(2, clamp(70px, 22vw, 112px));
-        grid-template-rows: repeat(2, clamp(39px, 11vw, 56px));
-      }
-
-      .control-group {
-        gap: 5px;
-        padding: 4px;
-      }
-    }
-
-    @media (orientation: portrait) and (max-width: 760px) {
-      .mobile-hint::after {
-        content: " For best visibility, rotate your phone sideways.";
-      }
+    @media (orientation:portrait) and (max-width:760px) {
+      .mobile-hint::after { content:" For best visibility, rotate your phone sideways."; }
     }
   </style>
 </head>
@@ -423,12 +79,10 @@
     <div class="layout">
       <section id="game-stage" aria-label="Don't Wake It game">
         <canvas id="game" width="960" height="640" aria-label="Game map"></canvas>
-
         <div class="utility">
           <button id="fullscreen-button" type="button" aria-pressed="false">⛶ Fullscreen</button>
           <button id="controls-settings-button" type="button" aria-expanded="false">⚙ Controls</button>
         </div>
-
         <section id="controls-editor" class="editor" aria-label="Touch control preferences" hidden>
           <h2>Touch control preferences</h2>
           <label class="checkline"><input id="edit-controls" type="checkbox"> Placement mode</label>
@@ -439,25 +93,20 @@
           <input id="control-opacity" type="range" min="0.25" max="0.85" step="0.05" value="0.55">
           <button id="close-controls-editor" type="button">Done</button>
         </section>
-
         <div class="touch-controls" aria-label="Touch controls">
           <div class="control-group move-group" data-control-group="move" aria-label="Movement controls">
-            <button type="button" data-game-key="arrowup" aria-label="Move up">▲</button>
-            <button type="button" data-game-key="arrowleft" aria-label="Move left">◀</button>
-            <button type="button" data-game-key="arrowdown" aria-label="Move down">▼</button>
-            <button type="button" data-game-key="arrowright" aria-label="Move right">▶</button>
+            <div id="joystick-base" class="joystick-base" role="application" aria-label="Virtual movement joystick">
+              <div id="joystick-knob" class="joystick-knob"></div>
+            </div>
           </div>
-
           <div class="control-group actions-group" data-control-group="actions" aria-label="Action controls">
             <button type="button" data-game-key="shift" aria-label="Sprint">SPRINT</button>
             <button type="button" data-game-key="h" aria-label="Hide">HIDE</button>
             <button type="button" data-game-key="e" aria-label="Take or bank treasure">TAKE / BANK</button>
           </div>
         </div>
-
         <p class="mobile-hint">Use ⚙ Controls to reposition or resize buttons.</p>
       </section>
-
       <aside class="hud" aria-label="Run information">
         <h2>Run</h2>
         <div class="stat"><span>Time</span><strong id="hud-timer">1:15</strong></div>
@@ -467,7 +116,6 @@
         <div class="stat"><span>Carrying</span><strong id="hud-carrying">Nothing</strong></div>
         <p id="hud-message">Move or interact to start the 75-second run.</p>
         <p id="hud-prompt"></p>
-
         <div class="instructions">
           <p><b>Move:</b> WASD or arrow keys</p>
           <p><b>Sprint:</b> hold Shift</p>
@@ -479,7 +127,6 @@
       </aside>
     </div>
   </main>
-
   <script src="game.js"></script>
 </body>
 </html>

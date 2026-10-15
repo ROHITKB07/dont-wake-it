@@ -92,6 +92,8 @@ const weaponBlueprints = [
 ];
 
 const keysDown = new Set();
+let joystickDirection = { x: 0, y: 0 };
+let joystickActive = false;
 
 const level = Array.from(
   { length: ROWS },
@@ -672,6 +674,8 @@ function canOccupy(x, y) {
 }
 
 function getMovementDirection() {
+  if (joystickActive) return joystickDirection;
+
   const movingRight =
     keysDown.has("d") || keysDown.has("arrowright");
   const movingLeft =
@@ -1900,8 +1904,8 @@ function saveControlLayout() {
 
 function applyControlLayout() {
   if (!gameStage) return;
-  gameStage.style.setProperty("--touch-scale", controlLayout.size);
-  gameStage.style.setProperty("--touch-opacity", controlLayout.opacity);
+  touchControlSurface?.style.setProperty("--touch-scale", controlLayout.size);
+  touchControlSurface?.style.setProperty("--touch-opacity", controlLayout.opacity);
 
   document.querySelectorAll("[data-control-group]").forEach((group) => {
     const savedPosition = controlLayout[group.dataset.controlGroup];
@@ -2038,6 +2042,70 @@ controlOpacitySlider?.addEventListener("input", () => {
   saveControlLayout();
 });
 
+const joystickBase = document.querySelector("#joystick-base");
+const joystickKnob = document.querySelector("#joystick-knob");
+
+function moveJoystick(event) {
+  if (!joystickBase || !joystickKnob) return;
+
+  const bounds = joystickBase.getBoundingClientRect();
+  const centerX = bounds.left + bounds.width / 2;
+  const centerY = bounds.top + bounds.height / 2;
+  const maxTravel = bounds.width * 0.28;
+  let dx = event.clientX - centerX;
+  let dy = event.clientY - centerY;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance > maxTravel) {
+    dx = dx / distance * maxTravel;
+    dy = dy / distance * maxTravel;
+  }
+
+  const travel = Math.min(1, Math.hypot(dx, dy) / maxTravel);
+  const deadZone = 0.08;
+  const strength = travel <= deadZone
+    ? 0
+    : (travel - deadZone) / (1 - deadZone);
+
+  joystickDirection = travel === 0
+    ? { x: 0, y: 0 }
+    : {
+        x: dx / Math.hypot(dx, dy) * strength,
+        y: dy / Math.hypot(dx, dy) * strength
+      };
+
+  joystickKnob.style.left = `calc(50% + ${dx}px)`;
+  joystickKnob.style.top = `calc(50% + ${dy}px)`;
+}
+
+function resetJoystick() {
+  joystickActive = false;
+  joystickDirection = { x: 0, y: 0 };
+  if (joystickKnob) {
+    joystickKnob.style.left = "50%";
+    joystickKnob.style.top = "50%";
+  }
+}
+
+joystickBase?.addEventListener("pointerdown", (event) => {
+  if (controlLayoutEditMode) return;
+  event.preventDefault();
+  event.stopPropagation();
+  joystickBase.setPointerCapture(event.pointerId);
+  joystickActive = true;
+  moveJoystick(event);
+});
+
+joystickBase?.addEventListener("pointermove", (event) => {
+  if (!joystickActive || controlLayoutEditMode) return;
+  event.preventDefault();
+  moveJoystick(event);
+});
+
+joystickBase?.addEventListener("pointerup", resetJoystick);
+joystickBase?.addEventListener("pointercancel", resetJoystick);
+joystickBase?.addEventListener("lostpointercapture", resetJoystick);
+
 document.querySelectorAll("[data-game-key]").forEach((button) => {
   const key = button.dataset.gameKey;
 
@@ -2067,6 +2135,7 @@ configureDraggableControlGroups();
 
 window.addEventListener("blur", () => {
   keysDown.clear();
+  resetJoystick();
   stopFootsteps();
 });
 
