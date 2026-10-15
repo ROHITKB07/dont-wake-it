@@ -233,6 +233,84 @@ const soundFiles = {
   silver: createSound("audio/silver-collect.ogg")
 };
 
+// Creature sounds are generated in the browser, so no extra audio file is needed.
+let creatureAudioContext = null;
+let creatureSnoreTimer = 0;
+
+function prepareCreatureAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  try {
+    if (!creatureAudioContext) {
+      creatureAudioContext = new AudioContextClass();
+    }
+    if (creatureAudioContext.state === "suspended") {
+      creatureAudioContext.resume().catch(() => {});
+    }
+  } catch {
+    // The game remains playable if Web Audio is unavailable.
+  }
+}
+
+function playCreatureTone(startFrequency, endFrequency, duration, volume, type = "sine") {
+  if (!creatureAudioContext || creatureAudioContext.state !== "running") return;
+
+  const now = creatureAudioContext.currentTime;
+  const oscillator = creatureAudioContext.createOscillator();
+  const gain = creatureAudioContext.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(startFrequency, now);
+  oscillator.frequency.exponentialRampToValueAtTime(
+    Math.max(1, endFrequency),
+    now + duration
+  );
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.linearRampToValueAtTime(volume, now + Math.min(0.08, duration * 0.2));
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  oscillator.connect(gain);
+  gain.connect(creatureAudioContext.destination);
+  oscillator.start(now);
+  oscillator.stop(now + duration + 0.02);
+}
+
+function playCreatureSnore() {
+  playCreatureTone(135, 112, 0.75, 0.035, "sine");
+  playCreatureTone(68, 58, 0.78, 0.018, "sine");
+}
+
+function playCreatureAlert(reason) {
+  // Sight gets a sharper, higher intake; a sound gets a lower sleepy groan.
+  if (reason === "sight") {
+    playCreatureTone(235, 150, 0.42, 0.075, "triangle");
+  } else {
+    playCreatureTone(155, 82, 0.72, 0.085, "triangle");
+    playCreatureTone(78, 52, 0.68, 0.045, "sine");
+  }
+}
+
+function playCreatureSearchCue() {
+  playCreatureTone(125, 92, 0.5, 0.055, "triangle");
+}
+
+function playCreatureSettleCue() {
+  playCreatureTone(100, 72, 0.65, 0.035, "sine");
+}
+
+function updateCreatureAudio(deltaSeconds) {
+  if (gameState !== "playing" || !creatureAudioContext) return;
+
+  if (creature.state === "sleeping") {
+    creatureSnoreTimer -= deltaSeconds;
+    if (creatureSnoreTimer <= 0) {
+      playCreatureSnore();
+      creatureSnoreTimer = 4.8;
+    }
+  } else {
+    creatureSnoreTimer = 1.5;
+  }
+}
+
 function createSound(path, shouldLoop = false) {
   const sound = new Audio(path);
   sound.preload = "auto";
@@ -504,6 +582,9 @@ function stopFootsteps() {
 }
 
 function resetRun() {
+  prepareCreatureAudio();
+  creatureSnoreTimer = 0.8;
+
   player.x = playerStart.x;
   player.y = playerStart.y;
   player.hidden = false;
@@ -727,6 +808,7 @@ function setCreatureInvestigating(target, reason) {
     creature.noiseTarget.y
   );
   creature.state = "investigating";
+  playCreatureAlert(reason);
   creature.searchTimer = 0;
   creature.alertReason = reason;
 }
@@ -823,6 +905,7 @@ function updateCreature(deltaSeconds) {
 
     if (reachedTarget) {
       creature.state = "searching";
+      playCreatureSearchCue();
       creature.searchTimer = SEARCH_TIME;
     }
   } else if (creature.state === "searching") {
@@ -836,6 +919,7 @@ function updateCreature(deltaSeconds) {
         creatureHome.y
       );
       creature.state = "returning";
+      playCreatureSettleCue();
     }
   } else if (creature.state === "returning") {
     const reachedHome = moveCreatureAlongPath(deltaSeconds);
@@ -1081,6 +1165,7 @@ function update(deltaSeconds) {
 
   if (gameState === "playing") {
     updateCreature(deltaSeconds);
+    updateCreatureAudio(deltaSeconds);
   }
 
   if (gameState === "playing" && runStarted) {
