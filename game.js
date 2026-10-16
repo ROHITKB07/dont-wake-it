@@ -145,6 +145,8 @@ carveHorizontalCorridor(18, 19, 11);  // Den to Kitchen
 carveHorizontalCorridor(5, 12, 14);   // Entry to south hallway
 carveHorizontalCorridor(17, 24, 14);  // Workshop to Kitchen
 
+const houseLayout = level.map((row) => row.slice());
+
 function tileCenter(column, row) {
   return {
     x: column * TILE_SIZE + TILE_SIZE / 2,
@@ -171,14 +173,17 @@ const creature = {
   searchTimer: 0,
   noiseTarget: null,
   targetTileKey: null,
-  alertReason: "sound"
+  alertReason: "sound",
+  patrolRoute: [],
+  patrolIndex: 0
 };
 
-// These crates are hiding spots and block movement and sight.
+// Indoor crates and outdoor shrubs are hiding spots and block movement/sight.
 const hidingSpots = [
   { ...tileCenter(12, 12), column: 12, row: 12 },
   { ...tileCenter(17, 10), column: 17, row: 10 }
 ];
+const houseHidingSpots = hidingSpots.map((spot) => ({ ...spot }));
 
 const exit = tileCenter(3, 11);
 
@@ -233,6 +238,91 @@ const lootItems = [
     noiseLabel: "loud"
   }
 ].map((item) => ({ ...item, collected: false }));
+const houseLootItems = lootItems.map((item) => ({ ...item }));
+
+function setHouseLevel() {
+  for (let row = 0; row < ROWS; row++) {
+    level[row] = houseLayout[row].slice();
+  }
+
+  currentLevel = 1;
+  playerStart.x = tileCenter(5, 11).x;
+  playerStart.y = tileCenter(5, 11).y;
+  exit.x = tileCenter(3, 11).x;
+  exit.y = tileCenter(3, 11).y;
+  creatureHome.x = tileCenter(14, 11).x;
+  creatureHome.y = tileCenter(14, 11).y;
+  creature.patrolRoute = [];
+  creature.patrolIndex = 0;
+  hidingSpots.splice(
+    0,
+    hidingSpots.length,
+    ...houseHidingSpots.map((spot) => ({ ...spot }))
+  );
+  lootItems.splice(
+    0,
+    lootItems.length,
+    ...houseLootItems.map((item) => ({ ...item, collected: false }))
+  );
+}
+
+function buildBackyardLevel() {
+  for (let row = 0; row < ROWS; row++) level[row].fill(WALL);
+  carveRoom(1, 1, 28, 18);
+
+  // Low garden hedges create lanes while leaving clear paths through the yard.
+  for (let column = 2; column <= 27; column++) {
+    if (column !== 10 && column !== 19) level[6][column] = WALL;
+  }
+  for (let row = 7; row <= 10; row++) {
+    level[row][9] = WALL;
+    level[row][20] = WALL;
+  }
+
+  // Shed and pond are solid obstacles; the open ground around them stays wide.
+  for (let row = 11; row <= 14; row++) {
+    for (let column = 2; column <= 5; column++) level[row][column] = WALL;
+  }
+  for (let row = 11; row <= 13; row++) {
+    for (let column = 13; column <= 14; column++) level[row][column] = WALL;
+  }
+  for (let column = 22; column <= 26; column++) level[12][column] = WALL;
+
+  currentLevel = 2;
+  playerStart.x = tileCenter(3, 16).x;
+  playerStart.y = tileCenter(3, 16).y;
+  exit.x = tileCenter(26, 16).x;
+  exit.y = tileCenter(26, 16).y;
+  creatureHome.x = tileCenter(10, 9).x;
+  creatureHome.y = tileCenter(10, 9).y;
+  creature.patrolRoute = [
+    tileCenter(16, 9), tileCenter(24, 9), tileCenter(24, 15),
+    tileCenter(17, 15), tileCenter(10, 14), tileCenter(10, 9)
+  ];
+  creature.patrolIndex = 0;
+  hidingSpots.splice(
+    0,
+    hidingSpots.length,
+    { ...tileCenter(7, 13), column: 7, row: 13 },
+    { ...tileCenter(20, 14), column: 20, row: 14 }
+  );
+
+  const backyardChests = [
+    { column: 7, row: 3, name: "Garden coin chest", value: 20, noiseRange: 90, noiseLabel: "quiet", color: "#e3a66f" },
+    { column: 14, row: 3, name: "Rainproof coin chest", value: 35, noiseRange: 140, noiseLabel: "noticeable", color: "#d9b36f" },
+    { column: 24, row: 3, name: "Old coin chest", value: 50, noiseRange: 175, noiseLabel: "loud", color: "#c99758" },
+    { column: 7, row: 16, name: "Buried coin chest", value: 25, noiseRange: 120, noiseLabel: "noticeable", color: "#d5a264" },
+    { column: 17, row: 13, name: "Locked coin chest", value: 60, noiseRange: 210, noiseLabel: "very loud", color: "#f2c977" },
+    { column: 25, row: 9, name: "Storm cache", value: 80, noiseRange: 240, noiseLabel: "very loud", color: "#e7bd63" }
+  ].map((chest) => ({
+    ...tileCenter(chest.column, chest.row),
+    ...chest,
+    chest: true,
+    collected: false
+  }));
+
+  lootItems.splice(0, lootItems.length, ...backyardChests);
+}
 
 // These paths are relative to index.html.
 const soundFiles = {
@@ -279,6 +369,7 @@ let runStarted = false;
 let pickupProgress = 0;
 let nearbyLoot = null;
 let nearbyHidingSpot = null;
+let currentLevel = 1;
 let gameState = "menu";
 let interactPressed = false;
 let hidePressed = false;
@@ -286,6 +377,74 @@ let sprintNoiseTimer = 0;
 let footstepTimer = 0;
 let noiseEffect = null;
 let statusMessage = "Welcome back. Ready for another raid?";
+const BACKYARD_RUN_TIME_SECONDS = 75;
+const LIGHTNING_INTERVAL_SECONDS = 6;
+const LIGHTNING_FLASH_SECONDS = 0.42;
+let lightningCountdown = LIGHTNING_INTERVAL_SECONDS;
+let lightningFlashRemaining = 0;
+let stormAudioContext = null;
+
+function unlockStormAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  try {
+    if (!stormAudioContext) stormAudioContext = new AudioContextClass();
+    if (stormAudioContext.state === "suspended") {
+      stormAudioContext.resume().catch(() => {});
+    }
+  } catch {
+    // Lightning visuals still work if Web Audio is unavailable.
+  }
+}
+
+function playThunderRumble() {
+  if (!stormAudioContext || stormAudioContext.state !== "running") return;
+
+  try {
+    const audioContext = stormAudioContext;
+    const now = audioContext.currentTime;
+    const length = Math.floor(audioContext.sampleRate * 1.7);
+    const buffer = audioContext.createBuffer(1, length, audioContext.sampleRate);
+    const samples = buffer.getChannelData(0);
+
+    for (let index = 0; index < length; index++) {
+      const progress = index / length;
+      const decay = Math.pow(1 - progress, 2.2);
+      samples[index] = (Math.random() * 2 - 1) * decay;
+    }
+
+    const noise = audioContext.createBufferSource();
+    const lowPass = audioContext.createBiquadFilter();
+    const volume = audioContext.createGain();
+    noise.buffer = buffer;
+    lowPass.type = "lowpass";
+    lowPass.frequency.setValueAtTime(190, now);
+    volume.gain.setValueAtTime(0.0001, now);
+    volume.gain.linearRampToValueAtTime(0.22, now + 0.06);
+    volume.gain.exponentialRampToValueAtTime(0.0001, now + 1.7);
+    noise.connect(lowPass);
+    lowPass.connect(volume);
+    volume.connect(audioContext.destination);
+    noise.start(now);
+    noise.stop(now + 1.72);
+  } catch {
+    // A missed rumble should never interrupt movement or the run timer.
+  }
+}
+
+function updateStorm(deltaSeconds) {
+  if (currentLevel !== 2 || !runStarted) return;
+
+  lightningCountdown -= deltaSeconds;
+  lightningFlashRemaining = Math.max(0, lightningFlashRemaining - deltaSeconds);
+
+  if (lightningCountdown <= 0) {
+    lightningCountdown = LIGHTNING_INTERVAL_SECONDS;
+    lightningFlashRemaining = LIGHTNING_FLASH_SECONDS;
+    playThunderRumble();
+  }
+}
 
 function loadBestScore() {
   try {
@@ -523,6 +682,7 @@ function safelyStopSound(sound) {
 // Prime each element silently, then let real playback begin only after all
 // priming cleanup is complete. Failed elements are retried on later gestures.
 function unlockGameAudio() {
+  unlockStormAudio();
   if (audioUnlocked) return Promise.resolve(true);
   if (audioUnlockPromise) return audioUnlockPromise;
 
@@ -725,6 +885,10 @@ function stopFootsteps() {
 
 function resetRun() {
   stopCreatureLoops();
+  setHouseLevel();
+  keysDown.clear();
+  joystickDirection = { x: 0, y: 0 };
+  joystickActive = false;
   caughtElapsed = 0;
   deathCryPlayed = false;
 
@@ -763,6 +927,43 @@ function resetRun() {
   }
 
   stopFootsteps();
+}
+
+function enterBackyard() {
+  stopCreatureLoops();
+  stopFootsteps();
+  keysDown.clear();
+  joystickDirection = { x: 0, y: 0 };
+  joystickActive = false;
+  buildBackyardLevel();
+
+  player.x = playerStart.x;
+  player.y = playerStart.y;
+  player.hidden = false;
+  creature.x = creatureHome.x;
+  creature.y = creatureHome.y;
+  creature.state = "patrolling";
+  creature.path = [];
+  creature.searchTimer = 0;
+  creature.noiseTarget = null;
+  creature.targetTileKey = null;
+  creature.alertReason = "sound";
+
+  carriedItem = null;
+  remainingTime = BACKYARD_RUN_TIME_SECONDS;
+  runStarted = false;
+  pickupProgress = 0;
+  nearbyLoot = null;
+  nearbyHidingSpot = null;
+  interactPressed = false;
+  hidePressed = false;
+  sprintNoiseTimer = 0;
+  footstepTimer = 0;
+  noiseEffect = null;
+  lightningCountdown = 4;
+  lightningFlashRemaining = 0;
+  gameState = "playing";
+  statusMessage = "BACKYARD: Lightning reveals the yard. Find a coin chest and reach the gate.";
 }
 
 function isFurnitureAtTile(tileX, tileY) {
@@ -1077,7 +1278,19 @@ function failRun(reason, state = "failed") {
 }
 
 function updateCreature(deltaSeconds) {
-  if (creature.state === "investigating") {
+  if (creature.state === "patrolling") {
+    if (creature.path.length === 0 && creature.patrolRoute.length > 0) {
+      const target = creature.patrolRoute[creature.patrolIndex];
+      creature.path = findPath(creature.x, creature.y, target.x, target.y);
+    }
+
+    if (moveCreatureAlongPath(deltaSeconds) && creature.patrolRoute.length > 0) {
+      creature.patrolIndex =
+        (creature.patrolIndex + 1) % creature.patrolRoute.length;
+      const target = creature.patrolRoute[creature.patrolIndex];
+      creature.path = findPath(creature.x, creature.y, target.x, target.y);
+    }
+  } else if (creature.state === "investigating") {
     const reachedTarget = moveCreatureAlongPath(deltaSeconds);
 
     if (reachedTarget) {
@@ -1106,8 +1319,8 @@ function updateCreature(deltaSeconds) {
       creature.y = creatureHome.y;
       creature.noiseTarget = null;
       creature.targetTileKey = null;
-      creature.state = "sleeping";
-      startCreatureLoop(soundFiles.creatureSnore, 0.35);
+      creature.state = currentLevel === 2 ? "patrolling" : "sleeping";
+      if (currentLevel === 1) startCreatureLoop(soundFiles.creatureSnore, 0.35);
     }
   }
 
@@ -1138,7 +1351,9 @@ function handleExitInteraction() {
     statusMessage =
       `${carriedItem.name} banked! Safe total: $${bankedValue}. ` +
       (bankedValue >= MINIMUM_BOUNTY
-        ? "Press E again to escape or keep earning."
+        ? currentLevel === 1
+          ? "Press E again to head out to the backyard."
+          : "Press E again to leave through the gate."
         : `You need $${MINIMUM_BOUNTY - bankedValue} more to meet the bounty.`);
 
     carriedItem = null;
@@ -1150,6 +1365,11 @@ function handleExitInteraction() {
     const amountNeeded = MINIMUM_BOUNTY - bankedValue;
     statusMessage =
       `You need $${amountNeeded} more banked before you can escape.`;
+    return;
+  }
+
+  if (currentLevel === 1) {
+    enterBackyard();
     return;
   }
 
@@ -1191,6 +1411,8 @@ function update(deltaSeconds) {
     return;
   }
 
+  updateStorm(deltaSeconds);
+
   sprintNoiseTimer = Math.max(0, sprintNoiseTimer - deltaSeconds);
   footstepTimer = Math.max(0, footstepTimer - deltaSeconds);
 
@@ -1231,7 +1453,9 @@ function update(deltaSeconds) {
         player.hidden = true;
         statusMessage = "Hidden. Stay still, or press H to leave cover.";
       } else {
-        statusMessage = "Move close to a marked crate to hide.";
+        statusMessage = currentLevel === 2
+          ? "Move close to a marked shrub to hide."
+          : "Move close to a marked crate to hide.";
       }
     } else {
       statusMessage = "Stop moving before you try to hide.";
@@ -1325,7 +1549,9 @@ function update(deltaSeconds) {
         `Hold E: ${nearbyLoot.name} ($${nearbyLoot.value}, ` +
         `${nearbyLoot.noiseLabel}).`;
     } else if (nearbyHidingSpot) {
-      statusMessage = "Press H to hide behind this crate.";
+      statusMessage = currentLevel === 2
+        ? "Press H to hide in this shrub."
+        : "Press H to hide behind this crate.";
     } else if (creature.state === "investigating") {
       statusMessage = "The creature is investigating a sound or a sighting.";
     } else if (creature.state === "searching") {
@@ -1339,7 +1565,11 @@ function update(deltaSeconds) {
     }
   }
 
-  if (!player.hidden && creatureCanSeePlayer()) {
+  if (
+    !player.hidden &&
+    creatureCanSeePlayer() &&
+    (currentLevel === 1 || lightningFlashRemaining > 0)
+  ) {
     setCreatureInvestigating(player, "sight");
     statusMessage = "It saw you! Hide or get away.";
   }
@@ -1371,6 +1601,19 @@ function update(deltaSeconds) {
 function drawFloor(x, y) {
   const isAlternateTile = (x + y) % 2 === 0;
 
+  if (currentLevel === 2) {
+    context.fillStyle = isAlternateTile ? "#32443b" : "#2e4038";
+    context.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    context.strokeStyle = "#3a4d42";
+    context.strokeRect(
+      x * TILE_SIZE + 0.5,
+      y * TILE_SIZE + 0.5,
+      TILE_SIZE,
+      TILE_SIZE
+    );
+    return;
+  }
+
   context.fillStyle = isAlternateTile ? "#3d4a4c" : "#394648";
   context.fillRect(
     x * TILE_SIZE,
@@ -1389,6 +1632,24 @@ function drawFloor(x, y) {
 }
 
 function drawWall(x, y) {
+  if (currentLevel === 2) {
+    context.fillStyle = "#17251e";
+    context.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    context.fillStyle = "#355342";
+    context.fillRect(
+      x * TILE_SIZE + 2,
+      y * TILE_SIZE + 2,
+      TILE_SIZE - 4,
+      TILE_SIZE - 4
+    );
+    context.fillStyle = "#46674e";
+    context.beginPath();
+    context.arc(x * TILE_SIZE + 10, y * TILE_SIZE + 11, 5, 0, Math.PI * 2);
+    context.arc(x * TILE_SIZE + 22, y * TILE_SIZE + 20, 7, 0, Math.PI * 2);
+    context.fill();
+    return;
+  }
+
   context.fillStyle = "#182029";
   context.fillRect(
     x * TILE_SIZE,
@@ -1407,6 +1668,23 @@ function drawWall(x, y) {
 }
 
 function drawExit() {
+  if (currentLevel === 2) {
+    context.strokeStyle = "#c8b48a";
+    context.lineWidth = 5;
+    context.beginPath();
+    context.moveTo(exit.x - 18, exit.y - 18);
+    context.lineTo(exit.x - 18, exit.y + 18);
+    context.moveTo(exit.x + 18, exit.y - 18);
+    context.lineTo(exit.x + 18, exit.y + 18);
+    context.moveTo(exit.x - 18, exit.y - 16);
+    context.lineTo(exit.x + 18, exit.y - 16);
+    context.stroke();
+    context.fillStyle = "#f1eee7";
+    context.font = "12px sans-serif";
+    context.fillText("GATE", exit.x - 15, exit.y + 34);
+    return;
+  }
+
   context.fillStyle = "#c99d72";
   context.fillRect(exit.x - 13, exit.y - 16, 26, 32);
 
@@ -1425,6 +1703,23 @@ function drawExit() {
 
 function drawHidingSpots() {
   for (const spot of hidingSpots) {
+    if (currentLevel === 2) {
+      context.fillStyle = "#17251e";
+      context.beginPath();
+      context.ellipse(spot.x, spot.y + 5, 20, 13, 0, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#47694c";
+      context.beginPath();
+      context.arc(spot.x - 8, spot.y, 11, 0, Math.PI * 2);
+      context.arc(spot.x + 4, spot.y - 5, 13, 0, Math.PI * 2);
+      context.arc(spot.x + 12, spot.y + 1, 9, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#dce6d9";
+      context.font = "10px sans-serif";
+      context.fillText("HIDE", spot.x - 13, spot.y + 27);
+      continue;
+    }
+
     context.fillStyle = "#242a2d";
     context.fillRect(spot.x - 15, spot.y - 11, 32, 28);
 
@@ -1455,14 +1750,32 @@ function drawLoot() {
       continue;
     }
 
-    context.fillStyle = item.color;
-    context.beginPath();
-    context.moveTo(item.x, item.y - 10);
-    context.lineTo(item.x + 9, item.y);
-    context.lineTo(item.x, item.y + 10);
-    context.lineTo(item.x - 9, item.y);
-    context.closePath();
-    context.fill();
+    if (item.chest) {
+      // Compact chest pickups read clearly as backyard treasure at map scale.
+      context.fillStyle = "#6d492e";
+      context.fillRect(item.x - 12, item.y - 7, 24, 18);
+      context.fillStyle = item.color;
+      context.fillRect(item.x - 11, item.y - 9, 22, 9);
+      context.fillRect(item.x - 10, item.y + 3, 20, 7);
+      context.strokeStyle = "#392b23";
+      context.lineWidth = 2;
+      context.strokeRect(item.x - 12, item.y - 7, 24, 18);
+      context.beginPath();
+      context.moveTo(item.x, item.y - 8);
+      context.lineTo(item.x, item.y + 10);
+      context.stroke();
+      context.fillStyle = "#f4df9b";
+      context.fillRect(item.x - 2, item.y, 4, 5);
+    } else {
+      context.fillStyle = item.color;
+      context.beginPath();
+      context.moveTo(item.x, item.y - 10);
+      context.lineTo(item.x + 9, item.y);
+      context.lineTo(item.x, item.y + 10);
+      context.lineTo(item.x - 9, item.y);
+      context.closePath();
+      context.fill();
+    }
 
     context.fillStyle = "#f1eee7";
     context.font = "11px sans-serif";
@@ -1489,6 +1802,51 @@ function drawNoiseEffect() {
     Math.PI * 2
   );
   context.stroke();
+}
+
+function drawBackyardLighting() {
+  if (currentLevel !== 2) return;
+
+  if (lightningFlashRemaining > 0) {
+    context.fillStyle = "rgba(202, 220, 255, 0.34)";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.save();
+    context.strokeStyle = "rgba(255, 255, 245, 0.95)";
+    context.lineWidth = 5;
+    context.shadowColor = "#dbe8ff";
+    context.shadowBlur = 18;
+    context.beginPath();
+    context.moveTo(canvas.width * 0.74, 0);
+    context.lineTo(canvas.width * 0.69, 85);
+    context.lineTo(canvas.width * 0.75, 82);
+    context.lineTo(canvas.width * 0.66, 180);
+    context.stroke();
+    context.restore();
+  } else {
+    const light = context.createRadialGradient(
+      player.x, player.y, 18,
+      player.x, player.y, 142
+    );
+    light.addColorStop(0, "rgba(3, 7, 16, 0.02)");
+    light.addColorStop(0.45, "rgba(3, 7, 16, 0.35)");
+    light.addColorStop(1, "rgba(3, 7, 16, 0.94)");
+    context.fillStyle = light;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  context.fillStyle = "rgba(239, 242, 235, 0.9)";
+  context.font = "bold 15px sans-serif";
+  context.textAlign = "left";
+  context.fillText("BACKYARD · STORM", 18, 28);
+  context.textAlign = "right";
+  context.fillText(
+    lightningFlashRemaining > 0
+      ? "LIGHTNING!"
+      : `FLASH IN ${Math.max(1, Math.ceil(lightningCountdown))}`,
+    canvas.width - 18,
+    28
+  );
+  context.textAlign = "left";
 }
 
 function drawCreature() {
@@ -1550,7 +1908,7 @@ function drawCreature() {
 
   context.stroke();
 
-  let label = "SLEEPING";
+  let label = creature.state === "patrolling" ? "PATROLLING" : "SLEEPING";
 
   if (creature.state === "investigating") {
     label = creature.alertReason === "sight"
@@ -1914,6 +2272,7 @@ function drawGame() {
   drawNoiseEffect();
   drawCreature();
   drawPlayer();
+  drawBackyardLighting();
   if (gameState === "playing") drawPauseIcon();
 
   if (gameState === "escaped") {
