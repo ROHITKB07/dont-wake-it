@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#101722">
   <title>Don't Wake It</title>
+
   <style>
     :root {
       color-scheme: dark;
@@ -60,6 +61,20 @@
       width: 100%;
       height: auto;
       aspect-ratio: 3 / 2;
+    }
+
+    /* Prevent the browser's blue selection flash on touch controls. */
+    #game-stage,
+    #game,
+    .touch-controls,
+    .control-group,
+    .joystick-base,
+    .joystick-knob,
+    .touch-controls [data-game-key] {
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     .hud {
@@ -264,8 +279,6 @@
       text-shadow: 0 1px 3px #000;
       cursor: pointer;
       touch-action: none;
-      user-select: none;
-      -webkit-user-select: none;
     }
 
     .actions-group [data-game-key="shift"] {
@@ -473,6 +486,7 @@
     }
   </style>
 </head>
+
 <body>
   <main class="page">
     <h1>Don't Wake It</h1>
@@ -496,13 +510,22 @@
 
         <section id="controls-editor" class="editor" aria-label="Touch control preferences" hidden>
           <h2>Touch control preferences</h2>
-          <label class="checkline"><input id="edit-controls" type="checkbox"> Placement mode</label>
+
+          <label class="checkline">
+            <input id="edit-controls" type="checkbox">
+            Placement mode
+          </label>
+
           <p class="edit-hint">Turn on placement mode, then drag either control cluster.</p>
 
-          <label for="control-size">Button size <output id="control-size-value">100%</output></label>
+          <label for="control-size">
+            Button size <output id="control-size-value">100%</output>
+          </label>
           <input id="control-size" type="range" min="0.7" max="1.5" step="0.05" value="1">
 
-          <label for="control-opacity">Button transparency <output id="control-opacity-value">55%</output></label>
+          <label for="control-opacity">
+            Button transparency <output id="control-opacity-value">55%</output>
+          </label>
           <input id="control-opacity" type="range" min="0.25" max="0.85" step="0.05" value="0.55">
 
           <button id="close-controls-editor" type="button">Done</button>
@@ -550,6 +573,7 @@
   </main>
 
   <script src="game.js"></script>
+
   <script>
     (() => {
       const pairs = [
