@@ -11,6 +11,14 @@ const hud = {
   prompt: document.querySelector("#hud-prompt")
 };
 
+const fullscreenHud = {
+  banked: document.querySelector("#fullscreen-banked"),
+  best: document.querySelector("#fullscreen-best"),
+  wallet: document.querySelector("#fullscreen-wallet"),
+  timer: document.querySelector("#fullscreen-timer"),
+  carrying: document.querySelector("#fullscreen-carrying")
+};
+
 const TILE_SIZE = 32;
 const COLUMNS = 30;
 const ROWS = 20;
@@ -243,6 +251,7 @@ const soundFiles = {
 let caughtElapsed = 0;
 let deathCryPlayed = false;
 let deathCryDelay = 0.9;
+let audioUnlocked = false;
 
 function createSound(path, shouldLoop = false) {
   const sound = new Audio(path);
@@ -460,18 +469,52 @@ function drawPauseMenu() {
 }
 function playSound(sound, volume = 1) {
   if (!sound) {
-    return;
+    return Promise.resolve(false);
   }
 
   sound.volume = volume;
   sound.currentTime = 0;
 
-  const playback = sound.play();
+  try {
+    return sound.play().then(() => true).catch(() => false);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
 
-  if (playback && typeof playback.catch === "function") {
-    playback.catch(() => {
-      // A browser may block audio until the player interacts with the page.
-    });
+// Mobile Safari and some browsers require audio to be started by a user gesture.
+// Prime each audio element on the first tap/key press so later in-game sounds work.
+function unlockGameAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+
+  for (const sound of Object.values(soundFiles)) {
+    const previousVolume = sound.volume;
+    const previousMuted = sound.muted;
+    sound.muted = true;
+    sound.volume = 0;
+
+    try {
+      const playback = sound.play();
+      if (playback && typeof playback.then === "function") {
+        playback.then(() => {
+          sound.pause();
+          try { sound.currentTime = 0; } catch {}
+          sound.muted = previousMuted;
+          sound.volume = previousVolume;
+        }).catch(() => {
+          sound.muted = previousMuted;
+          sound.volume = previousVolume;
+        });
+      } else {
+        sound.pause();
+        sound.muted = previousMuted;
+        sound.volume = previousVolume;
+      }
+    } catch {
+      sound.muted = previousMuted;
+      sound.volume = previousVolume;
+    }
   }
 }
 
@@ -577,13 +620,7 @@ function playFootsteps(isSprinting) {
     chosenSound.volume = isSprinting ? 0.7 : 0.35;
     chosenSound.playbackRate = isSprinting ? 1.2 : 0.9;
 
-    const playback = chosenSound.play();
-
-    if (playback && typeof playback.catch === "function") {
-      playback.catch(() => {
-        // Browser audio may be unavailable until the first key press.
-      });
-    }
+    playSound(chosenSound, isSprinting ? 0.7 : 0.35);
   }
 }
 
@@ -927,7 +964,23 @@ function failRun(reason, state = "failed") {
     deathCryDelay = Number.isFinite(biteDuration) && biteDuration > 0
       ? biteDuration
       : 0.9;
-    playSound(soundFiles.creatureBite, 0.9);
+    const biteSound = soundFiles.creatureBite;
+    const crySound = soundFiles.playerDeathcry;
+    const playCry = () => {
+      if (gameState === "caught" && !deathCryPlayed) {
+        deathCryPlayed = true;
+        playSound(crySound, 0.9);
+      }
+    };
+
+    biteSound.onended = playCry;
+    const bitePlayback = playSound(biteSound, 0.9);
+    bitePlayback.then((started) => {
+      if (!started) {
+        // If the browser still rejects the bite, don't suppress the death cue.
+        window.setTimeout(playCry, 350);
+      }
+    });
   }
 }
 
@@ -1031,7 +1084,7 @@ function formatTime(seconds) {
 function update(deltaSeconds) {
   if (gameState === "caught") {
     caughtElapsed += deltaSeconds;
-    if (!deathCryPlayed && caughtElapsed >= deathCryDelay) {
+    if (!deathCryPlayed && caughtElapsed >= Math.max(2.5, deathCryDelay + 0.25)) {
       playSound(soundFiles.playerDeathcry, 0.9);
       deathCryPlayed = true;
     }
@@ -1477,15 +1530,22 @@ function drawPlayer() {
 }
 
 function drawHud() {
-  hud.banked.textContent =
-    `$${bankedValue} / $${MINIMUM_BOUNTY}`;
-  hud.best.textContent = `$${bestScore}`;
-  hud.wallet.textContent = `$${campaignWallet}`;
-  hud.timer.textContent =
-    runStarted ? formatTime(remainingTime) : "1:15";
-  hud.carrying.textContent = carriedItem
+  const bankedText = `$${bankedValue} / $${MINIMUM_BOUNTY}`;
+  const timerText = runStarted ? formatTime(remainingTime) : "1:15";
+  const carryingText = carriedItem
     ? `${carriedItem.name} ($${carriedItem.value})`
     : "Nothing";
+
+  hud.banked.textContent = bankedText;
+  hud.best.textContent = `$${bestScore}`;
+  hud.wallet.textContent = `$${campaignWallet}`;
+  hud.timer.textContent = timerText;
+  hud.carrying.textContent = carryingText;
+  fullscreenHud.banked.textContent = bankedText;
+  fullscreenHud.best.textContent = `$${bestScore}`;
+  fullscreenHud.wallet.textContent = `$${campaignWallet}`;
+  fullscreenHud.timer.textContent = timerText;
+  fullscreenHud.carrying.textContent = carryingText;
   hud.message.textContent = statusMessage;
   hud.prompt.textContent = nearbyHidingSpot && !player.hidden
     ? "You are near cover. Press H or tap HIDE."
@@ -1730,6 +1790,7 @@ function handleCanvasPointer(event) {
   }
 }
 function drawGame() {
+  gameStage?.classList.toggle("in-raid", gameState === "playing");
   drawHud();
 
   if (gameState === "menu") {
@@ -1807,6 +1868,7 @@ function gameLoop(currentTime) {
 }
 
 window.addEventListener("keydown", (event) => {
+  unlockGameAudio();
   const key = event.key.toLowerCase();
 
   if (key.startsWith("arrow")) {
@@ -1854,6 +1916,7 @@ window.addEventListener("keyup", (event) => {
 });
 
 canvas.addEventListener("pointerdown", handleCanvasPointer);
+window.addEventListener("pointerdown", unlockGameAudio, { once: true });
 
 const gameStage = document.querySelector("#game-stage");
 const touchControlSurface = document.querySelector(".touch-controls");
