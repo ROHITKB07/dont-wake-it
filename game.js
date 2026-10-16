@@ -236,7 +236,9 @@ const lootItems = [
 
 // These paths are relative to index.html.
 const soundFiles = {
-  walking: createSound("audio/footsteps-wood.wav", true),
+  // Walking is retriggered at the step cadence below; looping the whole sample
+  // made the footfalls sound uneven on mobile Safari.
+  walking: createSound("audio/footsteps-wood.wav"),
   sprinting: createSound("audio/sprint-footsteps.wav", true),
   coin: createSound("audio/coin-collect.wav"),
   diamond: createSound("audio/diamond-collect.wav"),
@@ -490,7 +492,7 @@ function playSound(sound, volume = 1) {
 function playSoundNow(sound, volume = 1) {
   try {
     sound.volume = volume;
-    sound.currentTime = 0;
+    safelyRewindSound(sound);
     const playback = sound.play();
     return playback && typeof playback.then === "function"
       ? playback.then(() => true).catch(() => false)
@@ -498,6 +500,23 @@ function playSoundNow(sound, volume = 1) {
   } catch {
     return Promise.resolve(false);
   }
+}
+
+function safelyRewindSound(sound) {
+  if (!sound || sound.readyState < 1) return;
+  try {
+    sound.currentTime = 0;
+  } catch {
+    // A seek is optional; never let it block playback on iOS Safari.
+  }
+}
+
+function safelyStopSound(sound) {
+  if (!sound) return;
+  try {
+    sound.pause();
+  } catch {}
+  safelyRewindSound(sound);
 }
 
 // Mobile Safari requires media playback to originate from a user gesture.
@@ -593,10 +612,7 @@ function startCreatureLoop(sound, volume) {
 function stopCreatureLoops() {
   for (const sound of [soundFiles.creatureSnore, soundFiles.creatureSniffing]) {
     sound.loopWanted = false;
-    sound.pause();
-    try {
-      sound.currentTime = 0;
-    } catch {}
+    safelyStopSound(sound);
   }
 }
 
@@ -688,15 +704,14 @@ function playFootsteps(isSprinting) {
     ? soundFiles.walking
     : soundFiles.sprinting;
 
-  otherSound.pause();
-  otherSound.currentTime = 0;
+  safelyStopSound(otherSound);
 
-  if (chosenSound.paused) {
-    chosenSound.currentTime = 0;
-    chosenSound.volume = isSprinting ? 0.7 : 0.35;
-    chosenSound.playbackRate = isSprinting ? 1.2 : 0.9;
-
-    playSound(chosenSound, isSprinting ? 0.7 : 0.35);
+  if (isSprinting) {
+    chosenSound.playbackRate = 1.2;
+    if (chosenSound.paused) playSound(chosenSound, 0.7);
+  } else {
+    chosenSound.playbackRate = 1;
+    if (chosenSound.paused) playSound(chosenSound, 0.35);
   }
 }
 
@@ -704,8 +719,7 @@ function stopFootsteps() {
   footstepsWanted = false;
   footstepUnlockQueued = false;
   for (const sound of [soundFiles.walking, soundFiles.sprinting]) {
-    sound.pause();
-    sound.currentTime = 0;
+    safelyStopSound(sound);
   }
 }
 
@@ -1162,7 +1176,7 @@ function formatTime(seconds) {
 function update(deltaSeconds) {
   if (gameState === "caught") {
     caughtElapsed += deltaSeconds;
-    if (!deathCryPlayed && caughtElapsed >= Math.max(2.5, deathCryDelay + 0.25)) {
+    if (!deathCryPlayed && caughtElapsed >= Math.max(1.8, deathCryDelay + 0.3)) {
       playSound(soundFiles.playerDeathcry, 0.9);
       deathCryPlayed = true;
     }
@@ -1910,7 +1924,7 @@ function drawGame() {
     );
   } else if (gameState === "caught") {
     drawCaughtBlood();
-    if (caughtElapsed >= Math.max(2.4, deathCryDelay + 1.2)) {
+    if (caughtElapsed >= Math.max(4.5, deathCryDelay + 2)) {
       drawEndScreen(
         "It found you!",
         `Banked: $${bankedValue}. Carried treasure was lost.`,
@@ -2285,4 +2299,3 @@ window.addEventListener("blur", () => {
 
 drawGame();
 requestAnimationFrame(gameLoop);
-
