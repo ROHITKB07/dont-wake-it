@@ -34,7 +34,8 @@
     /* Touch controls are only shown during an active raid. */
     .touch-controls { visibility:hidden; }
     #game-stage.in-raid .touch-controls { visibility:visible; }
-    @media (min-width:761px) and (hover:hover) and (pointer:fine) { .touch-controls, #controls-settings-button { display:none; } }
+    html:not(.touch-device) .touch-controls,
+    html:not(.touch-device) #controls-settings-button { display:none; }
     .control-group { position:absolute; display:flex; gap:8px; align-items:center; justify-content:center; padding:6px; border:1px dashed transparent; border-radius:16px; pointer-events:auto; touch-action:none; transform:scale(var(--touch-scale)); transform-origin:top left; }
     .move-group { padding:8px; }
     .joystick-base { position:relative; width:clamp(116px,16vw,150px); aspect-ratio:1; border:2px solid #d1dce180; border-radius:50%; background:rgb(16 23 34 / var(--touch-opacity)); box-shadow:inset 0 0 18px #0007; touch-action:none; }
@@ -79,6 +80,12 @@
       .mobile-hint::after { content:" For best visibility, rotate your phone sideways."; }
     }
   </style>
+  <script>
+    document.documentElement.classList.toggle(
+      "touch-device",
+      navigator.maxTouchPoints > 0 || "ontouchstart" in window
+    );
+  </script>
 </head>
 <body>
   <main class="page">
