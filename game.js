@@ -252,6 +252,11 @@ let caughtElapsed = 0;
 let deathCryPlayed = false;
 let deathCryDelay = 0.9;
 let audioUnlocked = false;
+let audioUnlockPromise = null;
+const unlockedSounds = new WeakSet();
+let footstepsWanted = false;
+let footstepsSprinting = false;
+let footstepUnlockQueued = false;
 
 function createSound(path, shouldLoop = false) {
   const sound = new Audio(path);
@@ -472,23 +477,46 @@ function playSound(sound, volume = 1) {
     return Promise.resolve(false);
   }
 
-  sound.volume = volume;
-  sound.currentTime = 0;
+  // Wait for the silent iOS/Safari unlock attempt to finish before starting
+  // audible playback. Otherwise its cleanup can pause a sound just started by
+  // the same tap (most often the creature's snore on the Start button).
+  if (audioUnlockPromise) {
+    return audioUnlockPromise.then(() => playSoundNow(sound, volume));
+  }
 
+  return playSoundNow(sound, volume);
+}
+
+function playSoundNow(sound, volume = 1) {
   try {
-    return sound.play().then(() => true).catch(() => false);
+    sound.volume = volume;
+    sound.currentTime = 0;
+    const playback = sound.play();
+    return playback && typeof playback.then === "function"
+      ? playback.then(() => true).catch(() => false)
+      : Promise.resolve(true);
   } catch {
     return Promise.resolve(false);
   }
 }
 
-// Mobile Safari and some browsers require audio to be started by a user gesture.
-// Prime each audio element on the first tap/key press so later in-game sounds work.
+// Mobile Safari requires media playback to originate from a user gesture.
+// Prime each element silently, then let real playback begin only after all
+// priming cleanup is complete. Failed elements are retried on later gestures.
 function unlockGameAudio() {
-  if (audioUnlocked) return;
-  audioUnlocked = true;
+  if (audioUnlocked) return Promise.resolve(true);
+  if (audioUnlockPromise) return audioUnlockPromise;
 
-  for (const sound of Object.values(soundFiles)) {
+  const soundsToUnlock = Object.values(soundFiles).filter(
+    (sound) => !unlockedSounds.has(sound)
+  );
+
+  if (soundsToUnlock.length === 0) {
+    audioUnlocked = true;
+    return Promise.resolve(true);
+  }
+
+  const attempts = soundsToUnlock.map((sound) => {
     const previousVolume = sound.volume;
     const previousMuted = sound.muted;
     sound.muted = true;
@@ -497,46 +525,78 @@ function unlockGameAudio() {
     try {
       const playback = sound.play();
       if (playback && typeof playback.then === "function") {
-        playback.then(() => {
+        return playback.then(() => {
           sound.pause();
-          try { sound.currentTime = 0; } catch {}
+          try {
+            sound.currentTime = 0;
+          } catch {}
           sound.muted = previousMuted;
           sound.volume = previousVolume;
+          unlockedSounds.add(sound);
+          return true;
         }).catch(() => {
+          sound.pause();
+          try {
+            sound.currentTime = 0;
+          } catch {}
           sound.muted = previousMuted;
           sound.volume = previousVolume;
+          return false;
         });
       } else {
         sound.pause();
+        try {
+          sound.currentTime = 0;
+        } catch {}
         sound.muted = previousMuted;
         sound.volume = previousVolume;
+        unlockedSounds.add(sound);
+        return Promise.resolve(true);
       }
     } catch {
       sound.muted = previousMuted;
       sound.volume = previousVolume;
+      return Promise.resolve(false);
     }
-  }
+  });
+
+  audioUnlockPromise = Promise.all(attempts).then((results) => {
+    audioUnlocked = results.every(Boolean) ||
+      Object.values(soundFiles).every((sound) => unlockedSounds.has(sound));
+    audioUnlockPromise = null;
+    return audioUnlocked;
+  });
+
+  return audioUnlockPromise;
 }
 
 function startCreatureLoop(sound, volume) {
   if (!sound) return;
   sound.loop = true;
   sound.volume = volume;
-  if (!sound.paused) return;
+  sound.loopWanted = true;
 
-  sound.currentTime = 0;
-  const playback = sound.play();
-  if (playback && typeof playback.catch === "function") {
-    playback.catch(() => {
-      // The browser may delay audio until the player starts the raid.
-    });
+  const start = () => {
+    if (!sound.loopWanted || !sound.paused) return;
+    playSoundNow(sound, volume);
+  };
+
+  if (audioUnlockPromise) {
+    audioUnlockPromise.then(start);
+    return;
   }
+
+  if (!sound.paused) return;
+  start();
 }
 
 function stopCreatureLoops() {
   for (const sound of [soundFiles.creatureSnore, soundFiles.creatureSniffing]) {
+    sound.loopWanted = false;
     sound.pause();
-    sound.currentTime = 0;
+    try {
+      sound.currentTime = 0;
+    } catch {}
   }
 }
 
@@ -605,6 +665,22 @@ function playTreasureSound(item) {
 }
 
 function playFootsteps(isSprinting) {
+  footstepsWanted = true;
+  footstepsSprinting = isSprinting;
+
+  if (audioUnlockPromise) {
+    if (!footstepUnlockQueued) {
+      footstepUnlockQueued = true;
+      audioUnlockPromise.then(() => {
+        footstepUnlockQueued = false;
+        if (footstepsWanted && gameState === "playing") {
+          playFootsteps(footstepsSprinting);
+        }
+      });
+    }
+    return;
+  }
+
   const chosenSound = isSprinting
     ? soundFiles.sprinting
     : soundFiles.walking;
@@ -625,6 +701,8 @@ function playFootsteps(isSprinting) {
 }
 
 function stopFootsteps() {
+  footstepsWanted = false;
+  footstepUnlockQueued = false;
   for (const sound of [soundFiles.walking, soundFiles.sprinting]) {
     sound.pause();
     sound.currentTime = 0;
@@ -1916,7 +1994,10 @@ window.addEventListener("keyup", (event) => {
 });
 
 canvas.addEventListener("pointerdown", handleCanvasPointer);
-window.addEventListener("pointerdown", unlockGameAudio, { once: true });
+// Capture phase is intentional: unlock audio before a tapped canvas/menu
+// control starts a sound during the same interaction. Keep listening so a
+// rejected iOS unlock can be retried on the next tap.
+window.addEventListener("pointerdown", unlockGameAudio, { capture: true });
 
 const gameStage = document.querySelector("#game-stage");
 const touchControlSurface = document.querySelector(".touch-controls");
@@ -2204,3 +2285,4 @@ window.addEventListener("blur", () => {
 
 drawGame();
 requestAnimationFrame(gameLoop);
+
